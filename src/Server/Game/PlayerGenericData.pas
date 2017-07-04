@@ -20,7 +20,7 @@ type
 
   TGenericPacketData = class
     public
-      function ToPacketData: AnsiString; virtual; abstract;
+      function ToPacketData: RawByteString; virtual; abstract;
   end;
 
   TGenericPacketDatabase = class (TGenericPacketData)
@@ -29,6 +29,8 @@ type
       procedure SetIffId(iffId: UInt32); virtual; abstract;
       function GetId: UInt32; virtual; abstract;
       procedure SetId(id: UInt32); virtual; abstract;
+      function GetQty: UInt32; virtual; abstract;
+      function GetLifeTime: UInt16; virtual; abstract;
   end;
 
   TPlayerGenericData<DataType: record> = class (TGenericPacketDatabase)
@@ -41,17 +43,29 @@ type
       destructor Destroy; override;
 
       procedure Clear;
-      function ToPacketData: AnsiString; override;
-      function Load(packetData: AnsiString): Boolean;
+      function ToPacketData: RawByteString; override;
+      function Load(packetData: RawByteString): Boolean;
       function GetData: DataType;
 
       function GetIffId: UInt32; override;
       procedure SetIffId(iffId: UInt32); override;
       function GetId: UInt32; override;
       procedure SetId(id: UInt32); override;
+      function GetQty: UInt32; override;
+      function GetLifeTime: UInt16; override;
   end;
 
 implementation
+
+function TPlayerGenericData<DataType>.GetQty: UInt32;
+begin
+  Result := 0;
+end;
+
+function TPlayerGenericData<DataType>.GetLifeTime: UInt16;
+begin
+  Result := 0;
+end;
 
 constructor TPlayerGenericData<DataType>.Create;
 begin
@@ -69,13 +83,13 @@ begin
   FillChar(m_data, SizeOf(DataType), 0);
 end;
 
-function TPlayerGenericData<DataType>.ToPacketData: AnsiString;
+function TPlayerGenericData<DataType>.ToPacketData: RawByteString;
 begin
   setLength(result, sizeof(DataType));
   move(m_data, result[1], sizeof(DataType));
 end;
 
-function TPlayerGenericData<DataType>.Load(packetData: AnsiString): Boolean;
+function TPlayerGenericData<DataType>.Load(packetData: RawByteString): Boolean;
 const
   sizeOfData = SizeOf(DataType);
 begin

@@ -8,38 +8,34 @@
 
 program PangyaServer;
 
-{$IFDEF RELEASE}
-  {$APPTYPE CONSOLE}
-  {$DEFINE CONSOLE}
-{$ENDIF}
+{$APPTYPE CONSOLE}
+{$DEFINE CONSOLE}
 
 uses
   {$IFDEF DEBUG}
+  {$IFDEF MSWINDOWS}
+  {$IFDEF CPUX32}
   FastMM4 in 'Libs\Fast\FastMM4.pas',
   FastMM4Messages in 'Libs\Fast\FastMM4Messages.pas',
+  {$ENDIF}
+  {$ENDIF }
   {$ENDIF }
   {$IFDEF RELEASE}
   msvcrtMM,
   {$ENDIF }
-  Vcl.Forms,
-  MainPas in 'MainPas.pas' {Main},
-  ConsolePas in 'ConsolePas.pas' {Console},
+  SysUtils,
+  ConsolePas in 'ConsolePas.pas',
   Logging in 'Logging.pas',
   CryptLib in 'CryptLib.pas',
-  Buffer in 'Buffer.pas',
-  PangyaPacketsDef in 'PangyaPacketsDef.pas',
   SyncClient in 'Client\SyncClient.pas',
   Client in 'Server\Client.pas',
-  ClientPacket in 'Server\ClientPacket.pas',
   Server in 'Server\Server.pas',
-  ServerClient in 'Server\ServerClient.pas',
   SyncableServer in 'Server\SyncableServer.pas',
   LoginPlayer in 'Server\Login\LoginPlayer.pas',
   LoginServer in 'Server\Login\LoginServer.pas',
-  SyncServer in 'Server\Sync\SyncServer.pas',
   SyncUser in 'Server\Sync\SyncUser.pas',
   Database in 'Server\Sync\Database.pas',
-  PacketData in 'Server\PacketData.pas',
+  SyncServer in 'Server\Sync\SyncServer.pas',
   GameServerPlayer in 'Server\Game\GameServerPlayer.pas',
   GameServer in 'Server\Game\GameServer.pas',
   LobbiesList in 'Server\Game\LobbiesList.pas',
@@ -48,7 +44,6 @@ uses
   PlayerCharacters in 'Server\Game\PlayerCharacters.pas',
   PlayerData in 'Server\Game\PlayerData.pas',
   utils in 'utils.pas',
-  PangyaBuffer in 'PangyaBuffer.pas',
   DataChecker in 'DataChecker.pas',
   Game in 'Server\Game\Game.pas',
   GamesList in 'Server\Game\GamesList.pas',
@@ -64,8 +59,6 @@ uses
   PlayerCaddie in 'Server\Game\PlayerCaddie.pas',
   GameHoleInfo in 'Server\Game\GameHoleInfo.pas',
   WindInformation in 'Server\Game\WindInformation.pas',
-  ShotData in 'ShotData.pas',
-  Vector3 in 'Vector3.pas',
   PlayerMascots in 'Server\Game\PlayerMascots.pas',
   PlayerMascot in 'Server\Game\PlayerMascot.pas',
   GenericDataRecord in 'Server\Game\GenericDataRecord.pas',
@@ -93,21 +86,55 @@ uses
   PlayerLockerItem in 'Server\Game\PlayerLockerItem.pas',
   IffManager.HairStyle in 'Iff\IffManager.HairStyle.pas',
   PlayerShopItem in 'Server\Game\PlayerShopItem.pas',
-  ClubStats in 'Server\Game\ClubStats.pas';
+  ClubStats in 'Server\Game\ClubStats.pas',
+  ServerOptions in 'Server\Game\ServerOptions.pas',
+  SerialList in 'Collections\SerialList.pas',
+  SyncClientReadThread in 'Client\SyncClientReadThread.pas',
+  Packet in 'Packets\Packet.pas',
+  PacketReader in 'Packets\PacketReader.pas',
+  PacketWriter in 'Packets\PacketWriter.pas',
+  Types.PangyaBytes in 'Types\Types.PangyaBytes.pas',
+  Types.ShotData in 'Types\Types.ShotData.pas',
+  Types.Vector3 in 'Types\Types.Vector3.pas',
+  PacketsDef in 'Packets\PacketsDef.pas',
+  PacketData in 'Packets\PacketData.pas',
+  ServerApp in 'ServerApp.pas',
+  PlayerMoneyPacket in 'Packets\Server\PlayerMoneyPacket.pas',
+  MMO.Lock in 'Libs\MMO\MMO.Lock.pas',
+  MMO.OptionalCriticalSection in 'Libs\MMO\MMO.OptionalCriticalSection.pas',
+  Types.PangyaTypes in 'Types\Types.PangyaTypes.pas';
 
-{$R *.res}
+var
+  serverApp: TServerApp;
+  command: string;
 
 begin
-  ReportMemoryLeaksOnShutdown := DebugHook <> 0;
+{$IFDEF MSWINDOWS}
+	ReportMemoryLeaksOnShutdown := DebugHook <> 0;
+{$ENDIF}
+  try
+    serverApp := TServerApp.Create;
 
-  Application.Initialize;
-  Application.MainFormOnTaskbar := True;
+    serverApp.Start;
 
-  {$IFDEF CONSOLE}
-  Application.ShowMainForm := false;
-  {$ENDIF}
+    while serverApp.IsRunning do
+    begin
+      Write('>');
+      ReadLn(command);
+      if not serverApp.ParseCommand(command) then
+      begin
+        Console.Log('Invalid command');
+      end;
+    end;
 
-  Application.CreateForm(TMain, Main);
-  Application.CreateForm(TConsole, Console);
-  Application.Run;
+    serverApp.Stop;
+    serverApp.Free;
+
+  except
+    on E: Exception do
+    begin
+      Console.Log(E.ClassName + ': ' + E.Message, C_RED);
+      ReadLn;
+    end;
+  end;
 end.

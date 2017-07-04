@@ -11,8 +11,9 @@ unit Game;
 interface
 
 uses
-  Generics.Collections, GameServerPlayer, defs, PangyaBuffer, utils, ClientPacket, SysUtils,
-  GameHoleInfo, Vector3, System.TypInfo, PlayersList, GameHoles;
+  Generics.Collections, GameServerPlayer, defs, utils, SysUtils,
+  GameHoleInfo, Types.Vector3, System.TypInfo, PlayersList, GameHoles, PacketsDef,
+  Packet, PacketReader, PacketWriter;
 
 type
 
@@ -54,17 +55,27 @@ type
       destructor Destroy; override;
   end;
 
+  TGameCreateArgs = record
+    var Name: RawByteString;
+    var Password: RawByteString;
+    var GameInfo: TPlayerCreateGameInfo;
+    var Artifact: UInt32;
+    var GrandPrix: UInt32;
+  end;
+
   TGame = class
     private
       var m_id: UInt16;
       var m_players: TPlayersList;
-      var m_name: AnsiString;
-      var m_password: AnsiString;
+      var m_name: RawByteString;
+      var m_password: RawByteString;
       var m_gameInfo: TPlayerCreateGameInfo;
       var m_artifact: UInt32;
       var m_gameStarted: Boolean;
       var m_rain_drop_ratio: UInt8;
-      var m_gameKey: array [0 .. $F] of ansichar;
+      var m_gameKey: array [0 .. $F] of UTF8Char;
+
+      var m_grandPrix: Boolean;
 
       //var m_game_holes: TList<TGameHoleInfo>;
       var m_gameHoles: TGameHoles;
@@ -81,8 +92,47 @@ type
       procedure generateKey;
       function FGetPlayerCount: UInt16;
       procedure TriggerGameUpdated;
-      procedure DecryptShot(data: PansiChar; size: UInt32);
+      procedure DecryptShot(data: PUTF8Char; size: UInt32);
       procedure SendGameResult;
+
+      procedure ReorderPlayers(setRoomMaster: Boolean);
+      procedure SendWind;
+
+      function playersData: RawByteString;
+
+      procedure HandlePlayerLoadingInfo(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerHoleInformations(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerLoadOk(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerReady(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerChangeGameSettings(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayer1stShotReady(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerActionShot(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerActionRotate(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerActionHit(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerActionChangeClub(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerFastForward(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerChangeEquipment(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerChangeEquipment2(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerPowerShot(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerUseItem(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerShotData(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerShotSync(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlerPlayerHoleComplete(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandleMasterKickPlayer(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerAction(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerMoveAztec(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerPauseGame(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerLeaveGame(const client: TGameClient; const packetReader: TPacketReader);
+
+      procedure HandlerPlayerEnterShop(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerShopBuyItem(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerRequestShopIncome(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerRequestShopVisitorsCount(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerEditShopItems(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerCloseShop(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerEditShopName(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerEditShop(const client: TGameClient; const packetReader: TPacketReader);
+      procedure HandlePlayerStartGame(const client: TGameClient; const packetReader: TPacketReader);
 
     public
       property Id: UInt16 read m_id write m_id;
@@ -91,62 +141,28 @@ type
       property OnPlayerJoinGame: TGamePlayerGenericEvent read m_onPlayerJoinGame;
       property OnPlayerLeaveGame: TGamePlayerGenericEvent read m_onPlayerLeaveGame;
 
-      constructor Create(name, password: AnsiString; gameInfo: TPlayerCreateGameInfo; artifact: UInt32; onUpdate: TGameEvent);
+      constructor Create(args: TGameCreateArgs; onUpdate: TGameEvent);
       destructor Destroy; override;
 
       function AddPlayer(player: TGameClient): Boolean;
       function RemovePlayer(player: TGameClient): Boolean;
-      function GameInformation: AnsiString;
-      function GameResume: AnsiString;
+      function GameInformation: RawByteString;
+      function GameResume: RawByteString;
       procedure GoToNextHole;
-      procedure ReorderPlayers(setRoomMaster: Boolean);
-      procedure SendWind;
+      procedure Send(data: RawByteString); overload;
+      procedure Send(data: TPacket); overload;
 
-      procedure Send(data: AnsiString); overload;
-      procedure Send(data: TPangyaBuffer); overload;
+      procedure HandleRequests(const game: TGame; const packetId: TCGPID; const client: TGameClient; const packetReader: TPacketReader);
 
-      function playersData: AnsiString;
-
-      procedure HandlePlayerLoadingInfo(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerHoleInformations(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerLoadOk(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerReady(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerStartGame(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerChangeGameSettings(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayer1stShotReady(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerActionShot(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerActionRotate(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerActionHit(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerActionChangeClub(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerFastForward(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerChangeEquipment(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerChangeEquipment2(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerPowerShot(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerUseItem(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerShotData(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerShotSync(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlerPlayerHoleComplete(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandleMasterKickPlayer(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerAction(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerMoveAztec(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerPauseGame(const client: TGameClient; const clientPacket: TClientPacket);
-
-      procedure HandlerPlayerEnterShop(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerBuyItem(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerRequestShopIncome(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerRequestShopVisitorsCount(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerEditShopItems(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerCloseShop(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerEditShopName(const client: TGameClient; const clientPacket: TClientPacket);
-      procedure HandlePlayerEditShop(const client: TGameClient; const clientPacket: TClientPacket);
+      procedure DebugStartGame(const client: TGameClient; const packetReader: TPacketReader);
 
   end;
 
 implementation
 
-uses GameServerExceptions, Buffer, ConsolePas, PangyaPacketsDef, ShotData,
+uses GameServerExceptions, ConsolePas,
   PlayerGenericData, PlayerAction, PlayerCharacter, PlayerEquipment,
-  PlayerShopItem;
+  PlayerShopItem, Types.ShotData;
 
 constructor TGameGenericEvent.Create;
 begin
@@ -184,26 +200,30 @@ begin
   end;
 end;
 
-constructor TGame.Create(name, password: AnsiString; gameInfo: TPlayerCreateGameInfo; artifact: UInt32; onUpdate: TGameEvent);
+constructor TGame.Create(args: TGameCreateArgs; onUpdate: TGameEvent);
 var
   I: Integer;
 begin
+  inherited Create;
   Console.Log('TGame.Create', C_BLUE);
   m_onUpdateGame := TGameGenericEvent.Create;
   m_onPlayerJoinGame := TGamePlayerGenericEvent.Create;
   m_onPlayerLeaveGame := TGamePlayerGenericEvent.Create;
 
-  Console.Log(Format('mode : %s', [GetEnumName(TypeInfo(TGAME_MODE), Integer(gameInfo.mode))]));
-  Console.Log(Format('type : %s', [GetEnumName(TypeInfo(TGAME_TYPE), Integer(gameInfo.gameType))]));
+  Console.Log(Format('mode : %s', [GetEnumName(TypeInfo(TGAME_MODE), Integer(args.GameInfo.mode))]));
+  Console.Log(Format('type : %s', [GetEnumName(TypeInfo(TGAME_TYPE), Integer(args.GameInfo.gameType))]));
 
   m_onUpdateGame.Event := onUpdate;
-  m_name := name;
-  m_password := password;
-  m_gameInfo := gameInfo;
-  m_artifact := artifact;
+  m_name := args.Name;
+  m_password := args.Password;
+  m_gameInfo := args.GameInfo;
+  m_artifact := args.Artifact;
   m_players := TPlayersList.Create;
   m_gameStarted := false;
   m_rain_drop_ratio := 10;
+
+  m_grandPrix := args.GrandPrix = 1;
+
   generateKey;
   m_gameHoles := TGameHoles.Create;
 end;
@@ -212,22 +232,24 @@ destructor TGame.Destroy;
 var
   holeInfo: TGameHoleInfo;
 begin
-  inherited;
-
   m_players.Free;
   m_onUpdateGame.Free;
   m_onPlayerJoinGame.Free;
   m_onPlayerLeaveGame.Free;
   m_gameHoles.Free;
+  inherited;
 end;
 
 function TGame.AddPlayer(player: TGameClient): Boolean;
 var
   gamePlayer: TGameClient;
   playerIndex: integer;
-  res: TClientPacket;
+  res: TPacketWriter;
   gameId: UInt16;
+  playersCount: UInt32;
 begin
+  playersCount := m_players.Count;
+
   if m_players.Count >= m_gameInfo.maxPlayers then
   begin
     raise GameFullException.CreateFmt('Game (%d) is full', [Id]);
@@ -261,14 +283,6 @@ begin
 
   ReorderPlayers(false);
 
-  m_onUpdateGame.Trigger(self);
-
-  // my player info to others in game
-  self.Send(
-    #$48#$00 + #$01#$FF#$FF +
-    player.Data.GameInformation
-  );
-
   // game informations for me
   player.Send(
     #$49#$00 + #$00#$00 +
@@ -277,25 +291,39 @@ begin
 
   self.TriggerGameUpdated;
 
+  m_onUpdateGame.Trigger(self);
+
   m_onPlayerJoinGame.Trigger(self, player);
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$48#$00 + #$00#$FF#$FF);
-
   res.WriteUInt8(UInt8(m_players.Count));
-
   // Other player in game information to me
   for gamePlayer in m_players do
   begin
     res.WriteStr(gamePlayer.Data.GameInformation);
   end;
-
   res.WriteUInt8(0); // <- seem important
 
   self.Send(res);
 
   res.Free;
+
+  {
+  player.Send(
+    #$48#$00#$00#$FF#$FF#$01 +
+    player.Data.GameInformation +
+    #$00
+  );
+
+  // my player info to others in game
+  {
+  self.Send(
+    #$48#$00 + #$01#$FF#$FF +
+    player.Data.GameInformation
+  );
+  }
 
   Exit(true);
 end;
@@ -335,18 +363,18 @@ procedure TGame.ReorderPlayers(setRoomMaster: Boolean);
 var
   player: TGameClient;
   index: UInt8;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   index := 0;
   for player in m_players do
   begin
     if index = 0 then
     begin
-      player.Data.GameInfo.Role := 8;
+      player.Data.GameInfo.Role := TGeneric.Iff(m_grandPrix, $20, 8);
       if setRoomMaster then
       begin
         // Send the new master
-        res := TClientPacket.Create;
+        res := TPacketWriter.Create;
         res.WriteStr(#$7C#$00);
         res.WriteUint32(player.Data.Data.playerInfo1.ConnectionId);
         res.WriteStr(#$FF#$FF);
@@ -368,13 +396,13 @@ var
 begin
   randomize;
   for I := 0 to length(m_gameKey) - 1 do begin
-    m_gameKey[I] := ansichar(random($F));
+    m_gameKey[I] := UTF8Char(random($F));
   end;
 end;
 
-function TGame.GameInformation: AnsiString;
+function TGame.GameInformation: RawByteString;
 var
-  packet: TClientPacket;
+  packet: TPacketWriter;
   pl: integer;
   plTest: boolean;
   val: UInt8;
@@ -382,14 +410,14 @@ var
   gameType: UInt8;
   specialFlag: UInt8;
 begin
-  packet := TClientPacket.Create;
+  packet := TPacketWriter.Create;
 
   packet.WriteStr(
-    m_name, 27, #$00
+    m_name, 33, #$00
   );
 
   packet.WriteStr(
-    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00 +
     #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
     #$00#$00#$00#$00#$00#$00
   );
@@ -398,11 +426,14 @@ begin
   if m_gameinfo.gameType = TGAME_TYPE.GAME_TYPE_CHIP_IN_PRACTICE then
   begin
     gameType := $0B;
-    specialFlag := $0E;
+    specialFlag := $0E; // Chip in practice
   end else
   begin
     specialFlag := $FF;
   end;
+
+  // Grand prix
+  // specialFlag := $14;
 
   pl := Length(m_password);
   plTest := pl > 0;
@@ -449,12 +480,12 @@ begin
   packet.Free;
 end;
 
-function TGame.GameResume: AnsiString;
+function TGame.GameResume: RawByteString;
 var
-  packet: TClientPacket;
+  packet: TPacketWriter;
   gameType: UInt8;
 begin
-  packet := TClientPacket.Create;
+  packet := TPacketWriter.Create;
 
   gameType := UInt8(m_gameInfo.gameType);
   if m_gameinfo.gameType = TGAME_TYPE.GAME_TYPE_CHIP_IN_PRACTICE then
@@ -478,7 +509,7 @@ begin
   packet.Free;
 end;
 
-procedure TGame.Send(data: AnsiString);
+procedure TGame.Send(data: RawByteString);
 var
   client: TGameClient;
 begin
@@ -488,7 +519,7 @@ begin
   end;
 end;
 
-procedure TGame.Send(data: TPangyaBuffer);
+procedure TGame.Send(data: TPacket);
 var
   client: TGameClient;
 begin
@@ -503,13 +534,13 @@ begin
   Exit(Uint16(m_players.Count));
 end;
 
-function TGame.playersData: AnsiString;
+function TGame.playersData: RawByteString;
 var
   player: TGameClient;
-  clientPacket: TClientPacket;
+  clientPacket: TPacketWriter;
   playersCount: integer;
 begin
-  clientPacket := TClientPacket.Create;
+  clientPacket := TPacketWriter.Create;
   playersCount := m_players.Count;
 
   clientPacket.WriteUInt8(playersCount);
@@ -523,19 +554,19 @@ begin
   clientPacket.Free;
 end;
 
-procedure TGame.HandlePlayerLoadingInfo(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerLoadingInfo(const client: TGameClient; const packetReader: TPacketReader);
 var
   progress: UInt8;
-  res: TClientpacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerLoadingInfo', C_BLUE);
-  clientPacket.ReadUInt8(progress);
+  packetReader.ReadUInt8(progress);
 
   console.Log(Format('percent loaded: %d', [progress * 10]));
 
-  res := TClientpacket.Create;
+  res := TPacketWriter.Create;
 
-  res.WriteStr(WriteAction(SGPID_PLAYER_LOADING_INFO));
+  res.WriteStr(WriteAction(TSGPID.PLAYER_LOADING_INFO));
   res.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
   res.WriteUInt8(progress);
 
@@ -544,10 +575,10 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerHoleInformations(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerHoleInformations(const client: TGameClient; const packetReader: TPacketReader);
 type
   TData = packed record
-    un1: array [0..9] of AnsiChar;
+    un1: array [0..9] of UTF8Char;
     a, b, // start pos?
     x, z: Single; // hole position
   end;
@@ -557,7 +588,7 @@ begin
   // Should validate this between players
   Console.Log('TGame.HandlePlayerHoleInformations', C_BLUE);
   Console.Log('Should do that', C_ORANGE);
-  clientPacket.Read(data, sizeOf(TData));
+  packetReader.Read(data, sizeOf(TData));
   Console.Log(Format('a: %f, b: %f, c:%f, d: %f', [data.a, data.b, data.x, data.z]), C_RED);
 
   m_currentHolePos.x := data.x;
@@ -566,11 +597,11 @@ end;
 
 procedure Tgame.SendWind;
 var
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   with self.m_gameHoles.CurrentHole do
   begin
-    res := TClientPacket.Create;
+    res := TPacketWriter.Create;
     res.WriteStr(#$5B#$00);
     res.WriteUInt16(Wind.windpower);
     res.WriteUInt8(byte(random(255)));
@@ -582,9 +613,9 @@ begin
   end;
 end;
 
-procedure TGame.HandlePlayerLoadOk(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerLoadOk(const client: TGameClient; const packetReader: TPacketReader);
 var
-  reply: TClientPacket;
+  reply: TPacketWriter;
   AllPlayersReady: Boolean;
   numberOfPlayerRdy: UInt8;
   player: TGameClient;
@@ -623,7 +654,7 @@ begin
 
   self.SendWind;
 
-  reply := TClientPacket.Create;
+  reply := TPacketWriter.Create;
 
   reply.WriteStr(#$53#$00);
   reply.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
@@ -668,19 +699,19 @@ begin
 
 end;
 
-procedure TGame.HandlePlayerReady(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerReady(const client: TGameClient; const packetReader: TPacketReader);
 var
   status: UInt8;
   connectionId: UInt32;
-  reply: TClientPacket;
+  reply: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerReady', C_BLUE);
 
-  clientPacket.ReadUInt8(status);
+  packetReader.ReadUInt8(status);
 
   client.Data.GameInfo.ReadyForgame := status > 0;
 
-  reply := TClientPacket.Create;
+  reply := TPacketWriter.Create;
 
   reply.WriteStr(#$78#$00);
   reply.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
@@ -691,9 +722,14 @@ begin
   reply.Free
 end;
 
-procedure TGame.HandlePlayerStartGame(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.DebugStartGame(const client: TGameClient; const packetReader: TPacketReader);
+begin
+  self.HandlePlayerStartGame(client, packetReader);
+end;
+
+procedure TGame.HandlePlayerStartGame(const client: TGameClient; const packetReader: TPacketReader);
 var
-  res: TClientPacket;
+  res: TPacketWriter;
   player: TGameClient;
   gameHoleInfo: TGameHoleInfo;
 begin
@@ -703,7 +739,7 @@ begin
 
   self.Send(#$77#$00 + #$64#$00#$00#$00); // ??
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$76#$00 + #$00);
   res.WriteUInt8(UInt8(PlayerCount));
@@ -721,7 +757,7 @@ begin
       gameInfo.ShotReady := false;
       gameInfo.LoadComplete := false;
       gameInfo.ShotSync := false;
-      res.WriteStr(Data.Debug1);
+      res.WriteStr(Data.ToPacketData);
     end;
   end;
 
@@ -729,7 +765,7 @@ begin
 
   res.Clear;
 
-  res.WriteStr(WriteAction(SGPID_GAME_PLAY_INFO));
+  res.WriteStr(WriteAction(TSGPID.GAME_PLAY_INFO));
   res.WriteUInt8(self.m_gameInfo.map);
   res.WriteStr(#$00#$00);
   res.WriteUInt8(self.m_gameInfo.holeCount);
@@ -796,12 +832,12 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerChangeGameSettings(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerChangeGameSettings(const client: TGameClient; const packetReader: TPacketReader);
 var
   nbOfActions: UInt8;
   action: UInt8;
   i: UInt8;
-  tmpStr: AnsiString;
+  tmpStr: RawByteString;
   tmpUInt8: UInt8;
   tmpUInt16: UInt16;
   tmpUInt32: UInt32;
@@ -809,9 +845,9 @@ var
 begin
   Console.Log('TGame.HandlePlayerChangeGameSettings', C_BLUE);
 
-  clientPacket.Skip(2);
+  packetReader.Skip(2);
 
-  if not clientPacket.ReadUInt8(nbOfActions) then
+  if not packetReader.ReadUInt8(nbOfActions) then
   begin
     Console.Log('Failed to read nbOfActions', C_RED);
     Exit;
@@ -821,58 +857,58 @@ begin
 
   for i := 1 to nbOfActions do begin
 
-    if not clientPacket.ReadUInt8(action) then begin
+    if not packetReader.ReadUInt8(action) then begin
       console.log('Failed to read action', C_RED);
       break;
     end;
 
     case action of
       0: begin
-        if clientPacket.ReadPStr(tmpStr) then
+        if packetReader.ReadPStr(tmpStr) then
         begin
           // TODO: Should Check the size maybe
           m_name := tmpStr;
         end;
       end;
       1: begin
-        if clientPacket.ReadPStr(tmpStr) then
+        if packetReader.ReadPStr(tmpStr) then
         begin
           // TODO: Should Check the size maybe
           m_password := tmpStr;
         end;
       end;
       2: begin
-        if clientPacket.ReadUInt8(tmpUInt8) then
+        if packetReader.ReadUInt8(tmpUInt8) then
         begin
           m_gameInfo.gameType := TGAME_TYPE(tmpUInt8);
         end;
       end;
       3: begin
-        if clientPacket.ReadUInt8(tmpUInt8) then
+        if packetReader.ReadUInt8(tmpUInt8) then
         begin
           m_gameInfo.map := tmpUInt8;
         end;
       end;
       4: begin
-        if clientPacket.ReadUInt8(tmpUInt8) then
+        if packetReader.ReadUInt8(tmpUInt8) then
         begin
           m_gameInfo.holeCount := tmpUInt8;
         end;
       end;
       5: begin
-        if clientPacket.ReadUInt8(tmpUInt8) then
+        if packetReader.ReadUInt8(tmpUInt8) then
         begin
           m_gameInfo.Mode := TGAME_MODE(tmpUInt8);
         end;
       end;
       6: begin
-        if clientPacket.ReadUInt8(tmpUInt8) then
+        if packetReader.ReadUInt8(tmpUInt8) then
         begin
           m_gameInfo.turnTime := tmpUInt8 * 1000;
         end;
       end;
       7: begin
-        if clientPacket.ReadUInt8(tmpUInt8) then
+        if packetReader.ReadUInt8(tmpUInt8) then
         begin
           if tmpUInt8 > currentPlayersCount then
           begin
@@ -881,7 +917,7 @@ begin
         end;
       end;
       14: begin
-        if clientPacket.ReadUInt32(tmpUInt32) then
+        if packetReader.ReadUInt32(tmpUInt32) then
         begin
           m_gameInfo.naturalMode := tmpUInt32;
         end;
@@ -915,7 +951,7 @@ var
 begin
   Console.Log('TGame.HandlePlayerChangeGameSettings', C_BLUE);
 
-  numberOfPlayerRdy :=0;
+  numberOfPlayerRdy := 0;
 
   for player in m_players do
   begin
@@ -930,37 +966,37 @@ begin
     Exit;
   end;
 
-  self.Send(WriteAction(SGPID_PLAYER_1ST_SHOT_READY));
+  self.Send(WriteAction(TSGPID.PLAYER_1ST_SHOT_READY));
 end;
 
-procedure TGame.HandlePlayerActionShot(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerActionShot(const client: TGameClient; const packetReader: TPacketReader);
 type
   TInfo = packed record
-    un1: array [0..$3D] of AnsiChar;
+    un1: array [0..$3D] of UTF8Char;
   end;
 var
   shotType: UInt16;
   shotInfo: TInfo;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerActionShot', C_BLUE);
 
-  clientPacket.Log;
+  packetReader.Log;
 
-  clientPacket.ReadUInt16(shotType);
+  packetReader.ReadUInt16(shotType);
 
-  res := TClientPacket.Create;
-  res.WriteStr(WriteAction(SGPID_PLAYER_ACTION_SHOT));
+  res := TPacketWriter.Create;
+  res.WriteStr(WriteAction(TSGPID.PLAYER_ACTION_SHOT));
   res.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
 
   if shotType = 1 then
   begin
-    clientPacket.Skip(9);
-    clientPacket.Read(shotInfo, SizeOf(TInfo));
+    packetReader.Skip(9);
+    packetReader.Read(shotInfo, SizeOf(TInfo));
     res.Write(shotInfo, SizeOf(TInfo));
   end else
   begin
-    clientPacket.Read(shotInfo, SizeOf(TInfo));
+    packetReader.Read(shotInfo, SizeOf(TInfo));
     res.Write(shotInfo, SizeOf(TInfo));
   end;
 
@@ -971,18 +1007,18 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerActionRotate(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerActionRotate(const client: TGameClient; const packetReader: TPacketReader);
 var
   angle: Double;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerActionRoate', C_BLUE);
   Console.Log(Format('Angle : %f', [angle]));
 
-  clientPacket.ReadDouble(angle);
-  res := TClientPacket.Create;
+  packetReader.ReadDouble(angle);
+  res := TPacketWriter.Create;
 
-  res.WriteStr(WriteAction(SGPID_PLAYER_ACTION_ROTATE));
+  res.WriteStr(WriteAction(TSGPID.PLAYER_ACTION_ROTATE));
   res.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
   res.WriteDouble(angle);
 
@@ -991,26 +1027,26 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerActionHit(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerActionHit(const client: TGameClient; const packetReader: TPacketReader);
 begin
   Console.Log('TGame.HandlePlayerActionHit', C_BLUE);
 
 end;
 
-procedure TGame.HandlePlayerActionChangeClub(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerActionChangeClub(const client: TGameClient; const packetReader: TPacketReader);
 var
   clubType: TCLUB_TYPE;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerActionChangeClub', C_BLUE);
-  if not clientPacket.Read(clubType, 1) then
+  if not packetReader.Read(clubType, 1) then
   begin
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
-  res.WriteStr(WriteAction(SGPID_PLAYER_ACTION_CHANGE_CLUB));
+  res.WriteStr(WriteAction(TSGPID.PLAYER_ACTION_CHANGE_CLUB));
   res.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
   res.Write(clubType, 1);
 
@@ -1019,19 +1055,19 @@ begin
   res.Free;
 end;
 
-procedure TGame.DecryptShot(data: PAnsiChar; size: UInt32);
+procedure TGame.DecryptShot(data: PUTF8Char; size: UInt32);
 var
   x: Integer;
 begin
   for x := 0 to size-1 do
   begin
-    data[x] := ansichar(byte(data[x]) xor byte(m_gameKey[x mod 16]));
+    data[x] := UTF8Char(byte(data[x]) xor byte(m_gameKey[x mod 16]));
   end;
 end;
 
-procedure TGame.HandlePlayerFastForward(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerFastForward(const client: TGameClient; const packetReader: TPacketReader);
 var
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerFastForward', C_BLUE);
   {
@@ -1039,7 +1075,7 @@ begin
   00000000  65 00 00 00 40 40                                   e...@@
   }
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$C7#$00);
   res.WriteStr(#$00#$00#$40#$40); // same as sent packet
@@ -1048,7 +1084,7 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerChangeEquipment2(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerChangeEquipment2(const client: TGameClient; const packetReader: TPacketReader);
 var
   itemType: UInt8;
   IffId, Id: UInt32;
@@ -1062,11 +1098,11 @@ begin
 
   Ok := False;
 
-  clientPacket.ReadUint8(itemType);
+  packetReader.ReadUint8(itemType);
 
   case itemType of
     0: begin
-      if clientPacket.Read(characterData, SizeOf(TPlayerCharacterData)) then
+      if packetReader.Read(characterData, SizeOf(TPlayerCharacterData)) then
       begin
         if (client.Data.Characters.TryGetById(characterData.Data.Id, character)) then
         begin
@@ -1077,7 +1113,7 @@ begin
         client.Send(
           #$6B#$00 +
           #$04 + // no clue about it for now
-          AnsiChar(itemType) + // the above action?
+          UTF8Char(itemType) + // the above action?
           characterData.ToPacketData
         );
         Ok := true;
@@ -1085,26 +1121,26 @@ begin
     end;
     2: begin
       Console.Log('look like equiped items');
-      if clientPacket.Read(equipedItem, SizeOf(TPlayerEquipedItems)) then
+      if packetReader.Read(equipedItem, SizeOf(TPlayerEquipedItems)) then
       begin
         client.Data.Data.witems.items := equipedItem;
         client.Send(
           #$6B#$00 +
           #$04 + // no clue about it for now
-          AnsiChar(itemType) + // the above action?
+          UTF8Char(itemType) + // the above action?
           equipedItem.ToPacketData
         );
       end;
     end;
     4: begin // Decoration
       Console.Log('Look like decorations');
-      if clientPacket.Read(decorations, SizeOf(TDecorations)) then
+      if packetReader.Read(decorations, SizeOf(TDecorations)) then
       begin
         client.Data.Data.witems.decorations := decorations;
       end;
     end;
     5: begin
-      if clientPacket.ReadUint32(Id) then
+      if packetReader.ReadUint32(Id) then
       begin
         client.Data.EquipCharacterById(Id);
       end;
@@ -1112,7 +1148,7 @@ begin
     else;
     begin
       Console.Log(Format('Unknow item type %x', [itemType]), C_RED);
-      clientPacket.Log;
+      packetReader.Log;
       Exit;
     end;
   end;
@@ -1130,19 +1166,98 @@ begin
   end;
 end;
 
-procedure TGame.HandlePlayerBuyItem(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerShopBuyItem(const client: TGameClient; const packetReader: TPacketReader);
+var
+  ownerId: UInt32;
+  item: TPlayerShopItem;
+  res: TPacketWriter;
 begin
-  Console.Log('TGame.HandlePlayerBuyItem', C_BLUE);
-  clientPacket.Log;
+  Console.Log('TGame.HandlePlayerShopBuyItem', C_BLUE);
+  packetReader.Log;
 
+  packetReader.ReadUInt32(ownerId);
+  console.Log(Format('ownerId : %x', [ownerId]));
+
+  if not packetReader.Read(item, SizeOf(TPlayerShopItem)) then
+  begin
+    Exit;
+  end;
+
+
+  res := TPacketWriter.Create;
+
+  // Shop result
+  res.WriteStr(
+    #$EC#$00 +
+    #$01#$00#$00#$00 + // result
+    #$00#$5D#$15#$00#$00#$00#$00#$00#$00 +
+
+    #$00#$00#$00#$00 + // item shop id
+    #$01#$00#$00#$18#$F7#$6A#$5D#$04#$01#$00#$00#$00#$00 +
+    #$00#$00#$02#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$11#$F0#$CE#$B6#$11#$20#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00 +
+
+    #$00#$00#$00#$00#$01#$3C#$17#$53#$02 +
+    #$01#$00#$00#$18#$00#$00#$00#$00#$01#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$85#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$32#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$FF#$FF#$FF#$FF#$00#$00#$00#$00
+  );
+
+
+  client.Send(res);
+
+  res.Clear;
+
+  // decreasing items
+  res.WriteStr(
+    #$ED#$00 +
+    #$05#$00#$68#$73#$72#$65#$69 +
+    #$C0#$95#$12#$00 + // player id
+
+    #$00#$00#$00#$00 +
+    #$01#$00#$00#$18#$F7#$6A#$5D#$04#$01#$00#$00#$00#$00#$00#$00 +
+    #$02#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$11#$F0#$CE#$B6#$11#$20#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+    #$00#$00#$00#$00#$00#$00#$00#$00#$00 +
+
+    #$01#$00#$00#$00
+  );
+
+  client.Send(res);
+
+  res.Free;
 end;
 
-procedure TGame.HandlePlayerRequestShopIncome(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerRequestShopIncome(const client: TGameClient; const packetReader: TPacketReader);
 var
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerRequestShopIncome', C_BLUE);
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$EA#$00);
   res.WriteUInt32(1); // return code
@@ -1153,18 +1268,18 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlerPlayerEnterShop(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlerPlayerEnterShop(const client: TGameClient; const packetReader: TPacketReader);
 var
   playerId: UInt32;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlerPlayerEnterShop', C_BLUE);
-  if not clientPacket.ReadUInt32(playerId) then
+  if not packetReader.ReadUInt32(playerId) then
   begin
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(
     #$E6#$00
@@ -1206,18 +1321,18 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerMoveAztec(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerMoveAztec(const client: TGameClient; const packetReader: TPacketReader);
 var
   pos: TVector3;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerMoveAztec', C_BLUE);
-  if not clientPacket.Read(pos, SizeOf(TVector3)) then
+  if not packetReader.Read(pos, SizeOf(TVector3)) then
   begin
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$60#$00);
   res.Write(pos, SizeOf(TVector3));
@@ -1226,18 +1341,18 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerPauseGame(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerPauseGame(const client: TGameClient; const packetReader: TPacketReader);
 var
   status: UInt8;
-  res: TCLientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerPausegame', C_BLUE);
-  if not clientPacket.ReadUInt8(status) then
+  if not packetReader.ReadUInt8(status) then
   begin
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$8B#$00);
   res.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
@@ -1248,12 +1363,12 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerRequestShopVisitorsCount(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerRequestShopVisitorsCount(const client: TGameClient; const packetReader: TPacketReader);
 var
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerRequestShopVisitorCount', C_BLUE);
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$E9#$00);
   res.WriteUInt32(1); // return code
@@ -1264,16 +1379,16 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerEditShopItems(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerEditShopItems(const client: TGameClient; const packetReader: TPacketReader);
 var
   entries: array of TPlayerShopItem;
   count: UInt32;
   entry: TPlayerShopItem;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerEditShopItems', C_BLUE);
 
-  if not clientPacket.ReadUInt32(count) then
+  if not packetReader.ReadUInt32(count) then
   begin
     Exit;
   end;
@@ -1281,12 +1396,12 @@ begin
   // TODO: should check if count is not too crazy
   setLength(entries, count);
 
-  if not clientPacket.Read(entries[0], count * SizeOf(TPlayerShopItem)) then
+  if not packetReader.Read(entries[0], count * SizeOf(TPlayerShopItem)) then
   begin
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$EB#$00);
   res.WriteUInt32(1);
@@ -1308,13 +1423,13 @@ begin
 
 end;
 
-procedure TGame.HandlePlayerCloseShop(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerCloseShop(const client: TGameClient; const packetReader: TPacketReader);
 var
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerCloseShop', C_BLUE);
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   res.WriteStr(#$E4#$00);
   res.WriteUInt32(1); // return code
@@ -1330,18 +1445,18 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerEditShopName(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerEditShopName(const client: TGameClient; const packetReader: TPacketReader);
 var
-  shopName: AnsiString;
-  res: TClientPacket;
+  shopName: RawByteString;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerEditShopName', C_BLUE);
-  if not clientPacket.ReadPStr(shopName) then
+  if not packetReader.ReadPStr(shopName) then
   begin
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
   res.WriteStr(#$E8#$00);
   res.WriteUInt32(1);
   res.WritePStr(shopname);
@@ -1357,13 +1472,13 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerEditShop(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerEditShop(const client: TGameClient; const packetReader: TPacketReader);
 var
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerEditShop', C_BLUE);
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
 
   if m_gameInfo.gameType = GAME_TYPE_CHAT_ROOM then
   begin
@@ -1390,7 +1505,7 @@ begin
 
 end;
 
-procedure TGame.HandlePlayerChangeEquipment(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerChangeEquipment(const client: TGameClient; const packetReader: TPacketReader);
 type
   THeader = packed record
     Action: UInt8;
@@ -1398,12 +1513,12 @@ type
   end;
 var
   header: THeader;
-  res: TClientPacket;
+  res: TPacketWriter;
   ok: Boolean;
   equipment: TGenericPacketData;
 begin
   Console.Log('TGame.HandlePlayerChangeEquipment', C_BLUE);
-  if not clientPacket.Read(header, SizeOf(THeader)) then
+  if not packetReader.Read(header, SizeOf(THeader)) then
   begin
     Exit;
   end;
@@ -1412,7 +1527,7 @@ begin
 
   ok := true;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
   res.WriteStr(#$4B#$00);
   res.WriteUInt32(0);
   res.WriteUInt8(header.Action);
@@ -1473,18 +1588,18 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerPowerShot(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerPowerShot(const client: TGameClient; const packetReader: TPacketReader);
 var
   action: UInt8;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerPowerShot', C_BLUE);
-  if not ClientPacket.ReadUInt8(action) then
+  if not packetReader.ReadUInt8(action) then
   begin
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
   res.WriteStr(#$58#$00);
   res.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
   res.WriteUInt8(action);
@@ -1492,7 +1607,7 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerUseItem(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerUseItem(const client: TGameClient; const packetReader: TPacketReader);
 type
   TReply = packed record
     IffId: UInt32;
@@ -1501,18 +1616,18 @@ type
   end;
 var
   IffId: UInt32;
-  res: TClientPacket;
+  res: TPacketWriter;
   reply: TReply;
 begin
   Console.Log('TGame.HandlePlayerUseItem', C_BLUE);
-  if not clientPacket.ReadUInt32(IffId) then
+  if not packetReader.ReadUInt32(IffId) then
   begin
     Exit;
   end;
 
   // Should check if the player have this item
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
   res.WriteStr(#$5A#$00);
   res.WriteUInt32(IffId);
   res.WriteUInt32(1); // item Id
@@ -1522,20 +1637,20 @@ begin
   res.Free;
 end;
 
-procedure TGame.HandlePlayerShotData(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerShotData(const client: TGameClient; const packetReader: TPacketReader);
 var
   shotData: TShotData;
-  str: AnsiString;
-  res: TClientPacket;
+  str: RawByteString;
+  res: TPacketWriter;
 begin
   console.Log('TGame.HandlePlayerShotData', C_BLUE);
 
   client.Data.gameInfo.ShotSync := false;
 
-  clientPacket.Read(shotData, SizeOf(TShotData));
+  packetReader.Read(shotData, SizeOf(TShotData));
   DecryptShot(@shotData, SizeOf(TShotData));
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
   res.WriteStr(#$64#$00);
   res.Write(shotData, SizeOf(TShotData));
   self.Send(res);
@@ -1552,12 +1667,12 @@ begin
   console.Log(Format('hole distance : %f', [client.Data.GameInfo.holedistance]), C_RED);
 end;
 
-procedure TGame.HandlePlayerShotSync(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerShotSync(const client: TGameClient; const packetReader: TPacketReader);
 var
   player: TGameClient;
   nextPlayer: TGameClient;
   numberOfPlayerRdy: UInt8;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerShotSync', C_BLUE);
   client.Data.gameInfo.ShotSync := true;
@@ -1603,8 +1718,8 @@ begin
     if not (nil = nextPlayer) then
     begin
       self.SendWind;
-      res := TClientPacket.Create;
-      res.WriteStr(WriteAction(SGPID_PLAYER_NEXT));
+      res := TPacketWriter.Create;
+      res.WriteStr(WriteAction(TSGPID.PLAYER_NEXT));
       res.WriteInt32(nextPlayer.Data.Data.playerInfo1.ConnectionId);
       self.Send(res);
       res.Free;
@@ -1613,7 +1728,7 @@ begin
   end;
 end;
 
-procedure TGame.HandlerPlayerHoleComplete(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlerPlayerHoleComplete(const client: TGameClient; const packetReader: TPacketReader);
 var
   numberOfPlayerRdy: UInt8;
   player: TGameClient;
@@ -1653,10 +1768,10 @@ end;
 procedure TGame.SendGameResult;
 var
   player: TGameClient;
-  res: TClientPacket;
+  res: TPacketWriter;
   index: UInt8;
 begin
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
   index := 0;
 
   res.WriteStr(#$66#$00);
@@ -1691,14 +1806,14 @@ begin
   m_gameStarted := false;
 end;
 
-procedure TGame.HandleMasterKickPlayer(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandleMasterKickPlayer(const client: TGameClient; const packetReader: TPacketReader);
 var
   playerId: UInt32;
   playerToKick: TGameClient;
 begin
   Console.Log('TGame.HandleMasterKickPlayer', C_BLUE);
 
-  if not clientPacket.ReadUInt32(playerId) then
+  if not packetReader.ReadUInt32(playerId) then
   begin
     Exit;
   end;
@@ -1726,16 +1841,16 @@ begin
 
 end;
 
-procedure TGame.HandlePlayerAction(const client: TGameClient; const clientPacket: TClientPacket);
+procedure TGame.HandlePlayerAction(const client: TGameClient; const packetReader: TPacketReader);
 var
   action: TPLAYER_ACTION;
   subAction: TPLAYER_ACTION_SUB;
   pos: TVector3;
-  tmp: AnsiString;
-  animationName: AnsiString;
+  tmp: RawByteString;
+  animationName: RawByteString;
   gamePlayer: TGameServerPlayer;
   test: TPlayerAction;
-  res: TClientPacket;
+  res: TPacketWriter;
 begin
   Console.Log('TGame.HandlePlayerAction', C_BLUE);
   Console.Log(Format('ConnectionId : %x', [client.Data.Data.playerInfo1.ConnectionId]));
@@ -1745,15 +1860,15 @@ begin
     Exit;
   end;
 
-  tmp := clientPacket.GetRemainingData;
+  tmp := packetReader.GetRemainingData;
 
-  if not clientPacket.Read(action, 1) then
+  if not packetReader.Read(action, 1) then
   begin
     Console.Log('Failed to read player action', C_RED);
     Exit;
   end;
 
-  res := TClientPacket.Create;
+  res := TPacketWriter.Create;
   res.WriteStr(#$C4#$00);
   res.WriteUInt32(client.Data.Data.playerInfo1.ConnectionId);
   res.WriteStr(tmp);
@@ -1771,7 +1886,7 @@ begin
     TPLAYER_ACTION.PLAYER_ACTION_APPEAR: begin
 
       console.log('Player appear');
-      if not clientPacket.Read(gamePlayer.Action.pos.x, 12) then begin
+      if not packetReader.Read(gamePlayer.Action.pos.x, 12) then begin
         console.log('Failed to read player appear position', C_RED);
         Exit;
       end;
@@ -1785,7 +1900,7 @@ begin
 
       console.log('player sub action');
 
-      if not clientPacket.Read(subAction, 1) then begin
+      if not packetReader.Read(subAction, 1) then begin
         console.log('Failed to read sub action', C_RED);
       end;
 
@@ -1810,7 +1925,7 @@ begin
 
         console.log('player move');
 
-        if not clientPacket.Read(pos.x, 12) then begin
+        if not packetReader.Read(pos.x, 12) then begin
           console.log('Failed to read player moved position', C_RED);
           Exit;
         end;
@@ -1825,7 +1940,7 @@ begin
     end;
     TPLAYER_ACTION.PLAYER_ACTION_ANIMATION: begin
       console.log('play animation');
-      clientPacket.ReadPStr(animationName);
+      packetReader.ReadPStr(animationName);
       console.log('Animation : ' + animationName);
     end else begin
       console.log('Unknow action ' + inttohex(byte(action), 2));
@@ -1836,5 +1951,172 @@ begin
   res.Free;
 end;
 
+procedure TGame.HandlePlayerLeaveGame(const client: TGameClient; const packetReader: TPacketReader);
+begin
+  Console.Log('TGameServer.HandlePlayerLeaveGame', C_BLUE);
+
+  self.RemovePlayer(client);
+  //playerLobby.NullGame.AddPlayer(client);
+
+  {
+    // Game lobby info
+    // if player count reach 0
+    client.Send(
+      #$47#$00#$01#$02#$FF#$FF +
+      game.LobbyInformation
+    );
+
+    // if player count reach 0
+    client.Send(
+      #$47#$00#$01#$03#$FF#$FF +
+      game.LobbyInformation
+    );
+
+  }
+
+  client.Send(#$4C#$00#$FF#$FF);
+
+end;
+
+procedure TGame.HandleRequests(const game: TGame; const packetId: TCGPID; const client: TGameClient; const packetReader: TPacketReader);
+begin
+  case packetId of
+    TCGPID.PLAYER_CHANGE_GAME_SETTINGS:
+    begin
+      game.HandlePlayerChangeGameSettings(client, packetReader);
+    end;
+    TCGPID.PLAYER_READY:
+    begin
+      game.HandlePlayerReady(client, packetReader);
+    end;
+    TCGPID.PLAYER_START_GAME:
+    begin
+      game.HandlePlayerStartGame(client, packetReader);
+    end;
+    TCGPID.PLAYER_LOADING_INFO:
+    begin
+      game.HandlePlayerLoadingInfo(client, packetReader);
+    end;
+    TCGPID.PLAYER_LOAD_OK:
+    begin
+      game.HandlePlayerLoadOk(client, packetReader);
+    end;
+    TCGPID.PLAYER_HOLE_INFORMATIONS:
+    begin
+      game.HandlePlayerHoleInformations(client, packetReader);
+    end;
+    TCGPID.PLAYER_1ST_SHOT_READY:
+    begin
+      game.HandlePlayer1stShotReady(client, packetReader);
+    end;
+    TCGPID.PLAYER_ACTION_SHOT:
+    begin
+      game.HandlePlayerActionShot(client, packetReader);
+    end;
+    TCGPID.PLAYER_ACTION_ROTATE:
+    begin
+      game.HandlePlayerActionRotate(client, packetReader);
+    end;
+    TCGPID.PLAYER_ACTION_HIT:
+    begin
+      game.HandlePlayerActionHit(client, packetReader);
+    end;
+    TCGPID.PLAYER_ACTION_CHANGE_CLUB:
+    begin
+      game.HandlePlayerActionChangeClub(client, packetReader);
+    end;
+    TCGPID.PLAYER_USE_ITEM:
+    begin
+      game.HandlePlayerUseItem(client, packetReader);
+    end;
+    TCGPID.PLAYER_SHOTDATA:
+    begin
+      game.HandlePlayerShotData(client, packetReader);
+    end;
+    TCGPID.PLAYER_SHOT_SYNC:
+    begin
+      game.HandlePlayerShotSync(client, packetReader);
+    end;
+    TCGPID.PLAYER_HOLE_COMPLETE:
+    begin
+      game.HandlerPlayerHoleComplete(client, packetReader);
+    end;
+    TCGPID.PLAYER_FAST_FORWARD:
+    begin
+      game.HandlePlayerFastForward(client, packetReader);
+    end;
+    TCGPID.PLAYER_POWER_SHOT:
+    begin
+      game.HandlePlayerPowerShot(client, packetReader);
+    end;
+    TCGPID.PLAYER_ACTION:
+    begin
+      game.HandlePlayerAction(client, packetReader);
+    end;
+    TCGPID.MASTER_KICK_PLAYER:
+    begin
+      game.HandleMasterKickPlayer(client, packetReader);
+    end;
+    TCGPID.PLAYER_CHANGE_EQUIP:
+    begin
+      game.HandlePlayerChangeEquipment2(client, packetReader);
+    end;
+    TCGPID.PLAYER_CHANGE_EQUPMENT_A:
+    begin
+      game.HandlePlayerChangeEquipment(client, packetReader);
+    end;
+    TCGPID.PLAYER_CHANGE_EQUPMENT_B:
+    begin
+      game.HandlePlayerChangeEquipment(client, packetReader);
+    end;
+    TCGPID.PLAYER_EDIT_SHOP:
+    begin
+      game.HandlePlayerEditShop(client, packetReader);
+    end;
+    TCGPID.PLAYER_EDIT_SHOP_NAME:
+    begin
+      game.HandlePlayerEditShopName(client, packetReader);
+    end;
+    TCGPID.PLAYER_CLOSE_SHOP:
+    begin
+      game.HandlePlayerCloseShop(client, packetReader);
+    end;
+    TCGPID.PLAYER_EDIT_SHOP_ITEMS:
+    begin
+      game.HandlePlayerEditShopItems(client, packetReader);
+    end;
+    TCGPID.PLAYER_REQUEST_SHOP_VISITORS_COUNT:
+    begin
+      game.HandlePlayerRequestShopVisitorsCount(client, packetReader);
+    end;
+    TCGPID.PLAYER_PAUSE_GAME:
+    begin
+      game.HandlePlayerPauseGame(client, packetReader);
+    end;
+    TCGPID.PLAYER_MOVE_AZTEC:
+    begin
+      game.HandlePlayerMoveAztec(client, packetReader);
+    end;
+    TCGPID.PLAYER_ENTER_SHOP:
+    begin
+      game.HandlerPlayerEnterShop(client, packetReader);
+    end;
+    TCGPID.PLAYER_REQUEST_INCOME:
+    begin
+      game.HandlePlayerRequestShopIncome(client, packetReader);
+    end;
+    TCGPID.PLAYER_BUY_SHOP_ITEM:
+    begin
+      game.HandlePlayerShopBuyItem(client, packetReader);
+    end;
+    TCGPID.PLAYER_LEAVE_GAME:
+    begin
+      game.HandlePlayerLeaveGame(client, packetReader);
+    end;
+    else begin
+      Console.Log(Format('Unknow packet Id %x', [Word(packetID)]), C_RED);
+    end;
+  end;
+end;
 
 end.

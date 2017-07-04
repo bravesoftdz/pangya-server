@@ -11,11 +11,11 @@ unit LobbiesList;
 interface
 
 uses
-  Generics.Collections, Lobby, PacketData, GameServerPlayer, Game;
+  Generics.Collections, Lobby, PacketData, GameServerPlayer, Game, SerialList;
 
 type
 
-  TLobbyList = TList<TLobby>;
+  TLobbyList = TSerialList<TLobby>;
 
   TLobbiesList = class
     protected
@@ -25,16 +25,17 @@ type
     public
       constructor Create;
       destructor Destroy; override;
-      function GetLobbyById(lobbyId: Byte): TLobby;
-      function GetPlayerLobby(player: TGameClient): TLobby;
-      function GetPlayerGame(player: TGameClient): TGame;
-      procedure Send(data: AnsiString);
+      function GetLobbyById(const lobbyId: Byte): TLobby;
+      function GetPlayerLobby(const player: TGameClient): TLobby;
+      function TryGetPlayerLobby(const player: TGameClient; var lobby: TLobby): Boolean;
+      function GetPlayerGame(const player: TGameClient): TGame;
+      procedure Send(const data: RawByteString);
       function Build: TPacketData;
   end;
 
 implementation
 
-uses GameServerExceptions;
+uses GameServerExceptions, PacketWriter;
 
 constructor TLobbiesList.Create;
 var
@@ -43,15 +44,15 @@ var
 begin
   inherited;
   m_lobbies := TLobbyList.Create;
-  lobby := TLobby.Create;
+  lobby := TLobby.Create('lobby 1');
   lobby.Id := m_lobbies.Add(lobby);
 end;
 
 destructor TLobbiesList.Destroy;
 begin
-  inherited;
   DestroyLobbies;
   m_lobbies.Free;
+  inherited;
 end;
 
 procedure TLobbiesList.DestroyLobbies;
@@ -64,7 +65,7 @@ begin
   end;
 end;
 
-function TLobbiesList.GetLobbyById(lobbyId: Byte): TLobby;
+function TLobbiesList.GetLobbyById(const lobbyId: Byte): TLobby;
 var
   lobby: TLobby;
 begin
@@ -78,12 +79,22 @@ begin
   raise LobbyNotFoundException.Create('Lobby not found');
 end;
 
-function TLobbiesList.GetPlayerLobby(player: TGameClient): TLobby;
+function TLobbiesList.GetPlayerLobby(const player: TGameClient): TLobby;
 begin
   Exit(self.GetLobbyById(player.Data.Lobby));
 end;
 
-function TLobbiesList.GetPlayerGame(player: TGameClient): TGame;
+function TLobbiesList.TryGetPlayerLobby(const player: TGameClient; var lobby: TLobby): Boolean;
+begin
+  try
+    lobby := GetPlayerLobby(player);
+  except
+    Exit(False);
+  end;
+  Exit(True);
+end;
+
+function TLobbiesList.GetPlayerGame(const player: TGameClient): TGame;
 var
   lobby: TLobby;
 begin
@@ -94,15 +105,19 @@ end;
 function TLobbiesList.Build: TPacketData;
 var
   lobby: TLobby;
+  packetWriter: TPacketWriter;
 begin
-  Result := #$4D#$00 + #$01;
+  packetWriter := TPacketWriter.Create;
+  packetWriter.WriteUInt8(m_lobbies.Count);
   for lobby in m_lobbies do
   begin
-    Result := Result + lobby.Build;
+    packetWriter.WriteStr(lobby.Build);
   end;
+  Result := packetWriter.ToStr;
+  packetWriter.Free;
 end;
 
-procedure TLobbiesList.Send(data: AnsiString);
+procedure TLobbiesList.Send(const data: RawByteString);
 var
   lobby: TLobby;
 begin

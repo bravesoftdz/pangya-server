@@ -10,8 +10,10 @@ unit Server;
 
 interface
 
-uses ScktComp, Logging, Client, Generics.Collections, ExtCtrls, CryptLib,
-  ServerClient, ClientPacket, SyncClient, defs, PacketData, SysUtils;
+uses Logging, Client, Generics.Collections, CryptLib,
+  SyncClient, defs, PacketData, SysUtils,
+  SerialList, IdTcpServer, IdContext, IdGlobal, IdComponent,
+  IdSchedulerOfThreadPool, PacketReader, Types.PangyaBytes, MMO.Lock;
 
 type
 
@@ -23,21 +25,22 @@ type
   TServer<ClientType> = class abstract (TLogging)
     private
 
-      var m_clients: TList<TServerClient<ClientType>>;
-      var m_server: TServerSocket;
-      var m_timer: TTimer;
+      var m_clients: TSerialList<TClient<ClientType>>;
+      var m_server: TIdTCPServer;
+      var m_idSchedulerOfThreadPool: TIdSchedulerOfThreadPool;
+      var m_lock: TLock;
       var m_cryptLib: TCryptLib;
+      var m_maxPlayers: UInt32;
 
-      procedure ServerAccept(Sender: TObject; Socket: TCustomWinSocket);
-      procedure ServerRead(Sender: TObject; Socket: TCustomWinSocket);
-      procedure ServerConnect(Sender: TObject; Socket: TCustomWinSocket);
-      procedure ServerDisconnect(Sender: TObject; Socket: TCustomWinSocket);
-      procedure ServerError(Sender: TObject; Socket: TCustomWinSocket;
-        ErrorEvent: TErrorEvent; var ErrorCode: Integer);
+      procedure ServerOnConnect(AContext: TIdContext);
+      procedure ServerOnDisconnect(AContext: TIdContext);
+      procedure ServerOnExecute(AContext: TIdContext);
+      procedure ServerOnException(AContext: TIdContext; AException: Exception);
+      procedure ServerOnStatus(ASender: TObject; const AStatus: TIdStatus; const AStatusText: string);
 
-      procedure OnTimer(Sender: TObject);
-
-      function GetClientBySocket(Socket: TCustomWinSocket): TServerClient<ClientType>;
+      function GetClientByContext(AContext: TIdContext): TClient<ClientType>;
+      procedure SetContextData(AContext: TIdContext; data: TObject);
+      function GetContextData(AContext: TIdContext): TObject;
 
     protected
       procedure SetPort(port: Integer);
@@ -45,20 +48,20 @@ type
 
       procedure OnClientConnect(const client: TClient<ClientType>); virtual; abstract;
       procedure OnClientDisconnect(const client: TClient<ClientType>); virtual; abstract;
-      procedure OnReceiveClientData(const client: TClient<ClientType>; const clientPacket: TClientPacket); virtual; abstract;
+      procedure OnReceiveClientData(const client: TClient<ClientType>; const packetReader: TPacketReader); virtual; abstract;
       procedure OnStart; virtual; abstract;
       procedure OnDestroyClient(const client: TClient<ClientType>); virtual; abstract;
 
       function GetClientByUID(UID: TPlayerUID): TClient<ClientType>;
 
-      function Write(const source; const count: UInt32): AnsiString;
-      function WritePStr(const str: AnsiString): AnsiString;
-      function FillStr(data: AnsiString; size: UInt32; withWhat: AnsiChar): AnsiString;
+      function Write(const source; const count: UInt32): RawByteString;
+      function WritePStr(const str: RawByteString): RawByteString;
+      function FillStr(data: RawByteString; size: UInt32; withWhat: UTF8Char): RawByteString;
 
       function Deserialize(value: UInt32): UInt32;
 
       // Should replace this by something better
-      property Clients: TList<TServerClient<ClientType>> read m_clients;
+      property Clients: TSerialList<TClient<ClientType>> read m_clients;
     public
       constructor Create(cryptLib: TCryptLib);
       destructor Destroy; override;
@@ -70,46 +73,49 @@ type
 
   implementation
 
-uses Buffer, ConsolePas;
+uses ConsolePas, PacketsDef;
 
 constructor TServer<ClientType>.Create(cryptLib: TCryptLib);
 begin
+  inherited Create;
   console.Log('TServer<ClientType>.Create');
+  m_lock := TLock.Create(True);
   m_cryptLib := cryptLib;
-  m_timer := TTimer.Create(nil);
-  m_timer.OnTimer := OnTimer;
-  m_timer.Interval := 30;
-  m_clients := TList<TServerClient<ClientType>>.Create;
-  m_server := TServerSocket.Create(nil);
-  m_server.OnAccept := ServerAccept;
-  m_server.OnClientRead := ServerRead;
-  m_server.OnClientConnect := ServerConnect;
-  m_server.OnClientDisconnect := ServerDisconnect;
-  m_server.OnClientError := ServerError;
+  m_clients := TSerialList<TClient<ClientType>>.Create;
+  m_server := TIdTCPServer.Create(nil);
+
+  m_maxPlayers := 10;
+
+  m_idSchedulerOfThreadPool := TIdSchedulerOfThreadPool.Create(nil);
+  m_idSchedulerOfThreadPool.MaxThreads := m_maxPlayers;
+  m_idSchedulerOfThreadPool.PoolSize := m_maxPlayers;
+
+  m_server.MaxConnections := m_maxPlayers;
+  m_server.ListenQueue := m_maxPlayers;
+
+  m_server.OnExecute := ServerOnExecute;
+  m_server.OnConnect := ServerOnConnect;
+  m_server.OnDisconnect := ServerOnDisconnect;
+  m_server.OnException := ServerOnException;
+  m_server.OnStatus := ServerOnStatus;
+
+  m_server.Scheduler := m_idSchedulerOfThreadPool;
 end;
 
 destructor TServer<ClientType>.Destroy;
-var
-  client: TServerClient<ClientType>;
 begin
-  inherited;
-  m_timer.Free;
-
-  for client in m_clients do
-  begin
-    OnDestroyClient(client);
-    client.Free;
-  end;
-
-  m_clients.Free;
   m_server.Free;
+  m_idSchedulerOfThreadPool.Free;
+  m_clients.Free;
+  m_lock.Free;
+  inherited;
 end;
 
 procedure TServer<ClientType>.SetPort(port: Integer);
 begin
   Console.Log('TServer.SetPort', C_BLUE);
   Console.Log(Format('Port : %d', [port]));
-  self.m_server.Port := port;
+  self.m_server.DefaultPort := port;
 end;
 
 function TServer<ClientType>.Start: Boolean;
@@ -117,8 +123,7 @@ begin
   Log('TServer.Start', TLogType.TLogType_not);
   self.Init;
   try
-    self.m_server.Active := true;
-    m_timer.Enabled := true;
+    m_server.Active := true;
     Result := true;
     OnStart;
   except
@@ -126,137 +131,9 @@ begin
   end;
 end;
 
-procedure TServer<ClientType>.ServerAccept(Sender: TObject; Socket: TCustomWinSocket);
-var
-  client: TServerClient<ClientType>;
-  index: Integer;
-  id: integer;
-begin
-  Log('TServer.serverAccept', TLogType.TLogType_not);
-  if (m_clients.Count < 10) then
-  begin
-    client := TServerClient<ClientType>.Create(Socket, m_cryptLib);
-    client.ID := m_clients.Add(client);
-    self.OnClientConnect(client);
-  end;
-end;
-
-procedure TServer<ClientType>.ServerRead(Sender: TObject; Socket: TCustomWinSocket);
-var
-  client: TServerClient<ClientType>;
-  packetData: AnsiString;
-  buffin: TBuffer;
-  buffer: AnsiString;
-  size: Uint32;
-  clientPacket: TClientPacket;
-  realPacketSize: UInt32;
-begin
-  Log('TServer.serverRead', TLogType.TLogType_not);
-  client := GetClientBySocket(Socket);
-  size := 0;
-
-  if client = nil then
-  begin
-    Exit;
-  end;
-  client.ReceiveData(Socket.ReceiveText);
-
-  buffin := client.GetBuffin;
-
-  if (buffin.GetLength > 2) then
-  begin
-    move(buffin.GetData[2], size, 2);
-    realPacketSize := size + 4;
-  end else
-  begin
-    Exit;
-  end;
-
-  while buffin.GetLength >= realPacketSize  do
-  begin
-    buffer := buffin.Read(0, realPacketSize);
-    buffin.Delete(0, realPacketSize);
-
-    buffer := m_cryptLib.ClientDecrypt(buffer, client.GetKey);
-
-    clientPacket := TClientPacket.Create(buffer);
-
-    OnReceiveClientData(client, clientPacket);
-
-    clientPacket.Free;
-
-    if (buffin.GetLength > 2) then
-    begin
-      move(buffin.GetData[2], size, 2);
-      realPacketSize := size + 4;
-    end else
-    begin
-      Exit;
-    end;
-  end;
-end;
-
-procedure TServer<ClientType>.ServerConnect(Sender: TObject; Socket: TCustomWinSocket);
-begin
-  Log('TServer.serverConnect', TLogType.TLogType_not);
-
-end;
-
-procedure TServer<ClientType>.ServerDisconnect(Sender: TObject; Socket: TCustomWinSocket);
-var
-  client: TServerClient<ClientType>;
-begin
-  Log('TServer.serverDisconnect', TLogType.TLogType_not);
-  client := GetClientBySocket(Socket);
-  if client = nil then
-  begin
-    Console.Log('Client socket not found', C_RED);
-    Exit;
-  end;
-
-  self.OnClientDisconnect(client);
-
-  m_clients.Remove(client);
-
-  OnDestroyClient(client);
-  client.Free;
-end;
-
-procedure TServer<ClientType>.ServerError(Sender: TObject; Socket: TCustomWinSocket; ErrorEvent: TErrorEvent; var ErrorCode: Integer);
-begin
-  Log('TServer.serverError', TLogType.TLogType_not);
-  errorCode := 0;
-  Socket.Close;
-  Socket.free;
-end;
-
-procedure TServer<ClientType>.OnTimer(Sender: TObject);
-var
-  Client: TServerClient<ClientType>;
-begin
-  for Client in m_clients do
-  begin
-    Client.HandleSend;
-  end;
-end;
-
-function TServer<ClientType>.GetClientBySocket(Socket: TCustomWinSocket): TServerClient<ClientType>;
-var
-  Client: TServerClient<ClientType>;
-begin
-  for Client in m_clients do
-  begin
-    if client.HasSocket(socket) then
-    begin
-      Exit(client);
-    end;
-  end;
-  // TODO: Should raise an exception
-end;
-
 function TServer<ClientType>.GetClientByUID(UID: TPlayerUID): TClient<ClientType>;
 var
-  Client: TServerClient<ClientType>;
+  Client: TClient<ClientType>;
 begin
   for Client in m_clients do
   begin
@@ -267,13 +144,13 @@ begin
   end;
 end;
 
-function TServer<ClientType>.Write(const source; const count: UInt32): AnsiString;
+function TServer<ClientType>.Write(const source; const count: UInt32): RawByteString;
 begin
   setlength(result, count);
   move(source, result[1], count);
 end;
 
-function TServer<ClientType>.WritePStr(const str: AnsiString): AnsiString;
+function TServer<ClientType>.WritePStr(const str: RawByteString): RawByteString;
 var
   size: UInt32;
 begin
@@ -281,7 +158,7 @@ begin
   Result :=  Write(size, 2) + str;
 end;
 
-function TServer<ClientType>.FillStr(data: AnsiString; size: UInt32; withWhat: AnsiChar): AnsiString;
+function TServer<ClientType>.FillStr(data: RawByteString; size: UInt32; withWhat: UTF8Char): RawByteString;
 begin
   while length(data) < size do
   begin
@@ -301,7 +178,7 @@ end;
 
 procedure TServer<ClientType>.SendDebugData(data: TPacketData);
 var
-  client: TServerClient<ClientType>;
+  client: TClient<ClientType>;
 begin
   //Console.Log('SendDebugData', C_BLUE);
   //Console.WriteDump(data);
@@ -310,6 +187,158 @@ begin
   begin
     client.Send(data);
   end;
+end;
+
+procedure TServer<ClientType>.ServerOnConnect(AContext: TIdContext);
+var
+  client: TClient<ClientType>;
+begin
+  m_lock.Synchronize(procedure
+  begin
+    Console.Log('TServer<ClientType>.ServerOnConnect');
+    if (m_clients.Count >= m_maxPlayers) then
+    begin
+      Console.Log('Server full', C_RED);
+      AContext.Connection.Disconnect;
+      Exit;
+    end;
+
+    client := TClient<ClientType>.Create(AContext, m_cryptLib);
+    client.ID := m_clients.Add(client);
+    SetContextData(AContext, client);
+    OnClientConnect(client);
+  end);
+end;
+
+procedure TServer<ClientType>.ServerOnDisconnect(AContext: TIdContext);
+var
+  client: TClient<ClientType>;
+begin
+  m_lock.Synchronize(procedure
+  begin
+    client := GetClientByContext(AContext);
+    if client = nil then
+    begin
+      Exit;
+    end;
+
+    SetContextData(AContext, nil);
+
+    self.OnClientDisconnect(client);
+
+    m_clients.Remove(client);
+
+    OnDestroyClient(client);
+
+    client.Free;
+  end);
+end;
+
+procedure TServer<ClientType>.ServerOnExecute(AContext: TIdContext);
+var
+  buffer: TIdBytes;
+  decryptedBuffer: TPangyaBytes;
+  pheader: PTClientPacketHeader;
+  bufferSize: UInt32;
+  dataSize: UInt32;
+  packetReader: TPacketReader;
+  client: TClient<ClientType>;
+begin
+
+  with AContext.Connection.IOHandler do
+  begin
+    ReadBytes(buffer, SizeOf(TClientPacketHeader));
+    pheader := @buffer[0];
+    ReadBytes(buffer, pheader.size, true);
+  end;
+
+  pheader := @buffer[0];
+
+  bufferSize := Length(buffer);
+  dataSize := pheader.size;
+  if not (dataSize + 4 = bufferSize) then
+  begin
+    Console.Log('Something went wrong! Fix me', C_RED);
+    AContext.Connection.Disconnect;
+    Exit;
+  end;
+
+  client := self.GetClientByContext(AContext);
+
+  if nil = client then
+  begin
+    Console.Log('Something went wrong v2! Fix me', C_RED);
+    AContext.Connection.Disconnect;
+    Exit;
+  end;
+
+  m_cryptLib.ClientDecrypt2(TPangyaBytes(buffer), decryptedBuffer, client.GetKey);
+
+  packetReader := TPacketReader.CreateFromPangyaBytes(decryptedBuffer);
+
+  m_lock.Synchronize(procedure
+  begin
+    OnReceiveClientData(client, packetReader);
+  end);
+
+  packetReader.Free;
+end;
+
+procedure TServer<ClientType>.ServerOnException(AContext: TIdContext;
+  AException: Exception);
+begin
+  m_lock.Synchronize(procedure
+  begin
+    //Console.Log('TServer<ClientType>.ServerOnException');
+  end);
+end;
+
+procedure TServer<ClientType>.ServerOnStatus(ASender: TObject;
+  const AStatus: TIdStatus; const AStatusText: string);
+begin
+  m_lock.Synchronize(procedure
+  begin
+    //Console.Log('TServer<ClientType>.ServerOnStatus');
+  end);
+end;
+
+function TServer<ClientType>.GetClientByContext(AContext: TIdContext): TClient<ClientType>;
+var
+  Client: TClient<ClientType>;
+  contextObject: TObject;
+begin
+
+  contextObject := GetContextData(AContext);
+
+  for Client in m_clients do
+  begin
+    if client = contextObject then
+    begin
+      Exit(client);
+    end;
+  end;
+
+  Exit(nil);
+end;
+
+procedure TServer<ClientType>.SetContextData(AContext: TIdContext; data: TObject);
+begin
+  { $IFDEF USE_OBJECT_ARC}
+  {$IFDEF LINUX}
+  AContext.DataObject := data;
+  {$ELSE}
+  AContext.Data := data;
+  {$ENDIF}
+end;
+
+function TServer<ClientType>.GetContextData(AContext: TIdContext): TObject;
+begin
+  { $IFDEF USE_OBJECT_ARC}
+  {$IFDEF LINUX}
+  Exit(AContext.DataObject);
+  {$ELSE}
+  Exit(AContext.Data);
+  {$ENDIF}
 end;
 
 end.

@@ -11,7 +11,7 @@ unit PlayerGenericDataList;
 interface
 
 uses
-  Generics.Collections, PacketData, ClientPacket, PlayerGenericData;
+  Generics.Collections, PacketData, PlayerGenericData, PacketReader;
 
 type
 
@@ -38,6 +38,7 @@ type
 
     function Add(PacketData: TPacketData): PlayerDataClass; overload;
     function Add(IffId: UInt32): PlayerDataClass; overload;
+    function GetOrAddByIffId(IffId: UInt32): PlayerDataClass;
 
     procedure Remove(entry: PlayerDataClass);
 
@@ -55,10 +56,11 @@ type
 
 implementation
 
-uses ConsolePas, SysUtils, GameServerExceptions;
+uses ConsolePas, SysUtils, GameServerExceptions, PacketWriter;
 
 constructor TPlayerGenericDataList<DataType, PlayerDataClass, GenericCounter>.Create;
 begin
+  inherited;
   m_dataList := TList<PlayerDataClass>.Create;
   m_emptyData := PlayerDataClass.Create;
 end;
@@ -73,6 +75,7 @@ begin
   end;
   m_dataList.Free;
   m_emptyData.Free;
+  inherited;
 end;
 
 function TPlayerGenericDataList<DataType, PlayerDataClass, GenericCounter>.Add(IffId: UInt32): PlayerDataClass;
@@ -87,6 +90,14 @@ begin
 
   m_dataList.Add(playerData);
   Exit(playerData);
+end;
+
+function TPlayerGenericDataList<DataType, PlayerDataClass, GenericCounter>.GetOrAddByIffId(IffId: UInt32): PlayerDataClass;
+begin
+  if not TryGetByIffId(IffId, Result) then
+  begin
+    Result := Add(IffId);
+  end;
 end;
 
 function TPlayerGenericDataList<DataType, PlayerDataClass, GenericCounter>.Add(PacketData: TPacketData): PlayerDataClass;
@@ -110,11 +121,11 @@ end;
 function TPlayerGenericDataList<DataType, PlayerDataClass, GenericCounter>.ToPacketData
   : TPacketData;
 var
-  data: TClientPacket;
+  data: TPacketWriter;
   playerData: PlayerDataClass;
   dataCount: integer;
 begin
-  data := TClientPacket.Create;
+  data := TPacketWriter.Create;
 
   dataCount := m_dataList.Count;
 
@@ -142,36 +153,36 @@ end;
 procedure TPlayerGenericDataList<DataType, PlayerDataClass, GenericCounter>.Load
   (PacketData: TPacketData);
 var
-  ClientPacket: TClientPacket;
+  packetReader: TPacketReader;
   playerData: PlayerDataClass;
   count: UInt16;
   i: integer;
-  tmp: AnsiString;
+  tmp: RawByteString;
 begin
-  ClientPacket := TClientPacket.Create(PacketData);
+  packetReader := TPacketReader.CreateFromRawByteString(PacketData);
 
   count := 0;
   // TODO: should rethink that
   if TypeInfo(GenericCounter) = TypeInfo(TMascotCounter) then
   begin
-    ClientPacket.Read(count, 1);
+    packetReader.Read(count, 1);
   end
   else if TypeInfo(GenericCounter) = TypeInfo(TDoubleCounter) then
   begin
-    ClientPacket.Read(count, 2);
-    ClientPacket.Read(count, 2);
+    packetReader.Read(count, 2);
+    packetReader.Read(count, 2);
   end;
 
   setlength(tmp, sizeof(DataType));
 
   for i := 1 to count do
   begin
-    if ClientPacket.Read(tmp[1], sizeof(DataType)) then
+    if packetReader.Read(tmp[1], sizeof(DataType)) then
     begin
       playerData := self.Add(tmp);
     end;
   end;
-  ClientPacket.Free;
+  packetReader.Free;
 end;
 
 procedure TPlayerGenericDataList<DataType, PlayerDataClass, GenericCounter>.Clear;

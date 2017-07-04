@@ -10,29 +10,30 @@ unit SyncableServer;
 
 interface
 
-uses SyncClient, Server, CryptLib, ClientPacket, ScktComp, PangyaBuffer, SysUtils;
+uses SyncClient, Server, CryptLib, SysUtils, Packet, PacketReader;
 
 type
   TSyncableServer<ClientType> = class abstract (TServer<ClientType>)
     protected
-      procedure Sync(data: AnsiString); overload;
-      procedure Sync(data: TPangyaBuffer); overload;
+      procedure Sync(data: RawByteString); overload;
+      procedure Sync(data: TPacket); overload;
 
       procedure SetSyncPort(port: Integer);
       procedure StartSyncClient;
       procedure StopSyncClient;
       procedure SetSyncHost(host: string);
 
-      procedure OnReceiveSyncData(const clientPacket: TClientPacket); virtual; abstract;
+      procedure OnReceiveSyncData(const packetReader: TPacketReader); virtual; abstract;
       procedure OnConnect(sender: TObject); virtual; abstract;
+      procedure OnConnectSuccess(sender: TObject); virtual; abstract;
 
     private
       var m_syncClient: TSyncClient;
 
-      procedure OnClientRead(Sender: TObject; const clientPacket: TClientPacket);
+      procedure OnClientRead(Sender: TObject; const packetReader: TPacketReader);
 
     public
-      constructor Create(cryptLib: TCryptLib);
+      constructor Create(const name: string; const cryptLib: TCryptLib);
       destructor Destroy; override;
   end;
 
@@ -40,18 +41,19 @@ implementation
 
 uses Logging, ConsolePas;
 
-constructor TSyncableServer<ClientType>.Create(cryptLib: TCryptLib);
+constructor TSyncableServer<ClientType>.Create(const name: string; const cryptLib: TCryptLib);
 begin
-  inherited;
-  m_syncClient := TSyncClient.Create(cryptLib);
+  inherited Create(cryptLib);
+  m_syncClient := TSyncClient.Create(name + 'SyncableServer', cryptLib);
   m_syncClient.OnRead := self.OnClientRead;
   m_syncClient.OnConnect := OnConnect;
+  m_syncClient.OnConnectSuccess := OnConnectSuccess;
 end;
 
 destructor TSyncableServer<ClientType>.Destroy;
 begin
-  inherited;
   m_syncClient.Free;
+  inherited;
 end;
 
 procedure TSyncableServer<ClientType>.SetSyncPort(port: Integer);
@@ -61,25 +63,16 @@ begin
   m_syncClient.SetPort(port);
 end;
 
-procedure TSyncableServer<ClientType>.Sync(data: AnsiString);
+procedure TSyncableServer<ClientType>.Sync(data: RawByteString);
 begin
   self.Log('TSyncableServer<ClientType>.Sync', TLogType_not);
   m_syncClient.Send(data);
 end;
 
-procedure TSyncableServer<ClientType>.Sync(data: TPangyaBuffer);
-var
-  oldPos: Integer;
-  size: integer;
-  buff: AnsiString;
+procedure TSyncableServer<ClientType>.Sync(data: TPacket);
 begin
   self.Log('TSyncableServer<ClientType>.Sync', TLogType_not);
-  oldPos := data.Seek(0, 1);
-  data.Seek(0, 0);
-  size := data.GetSize;
-  data.ReadStr(buff, size);
-  m_syncClient.Send(buff);
-  data.Seek(oldPos, 0);
+  m_syncClient.Send(data.ToStr);
 end;
 
 procedure TSyncableServer<ClientType>.StartSyncClient;
@@ -102,9 +95,9 @@ begin
   m_syncClient.SetHost(host);
 end;
 
-procedure TSyncableServer<ClientType>.OnClientRead(Sender: TObject; const clientPacket: TClientPacket);
+procedure TSyncableServer<ClientType>.OnClientRead(Sender: TObject; const packetReader: TPacketReader);
 begin
-  self.OnReceiveSyncData(clientPacket);
+  self.OnReceiveSyncData(packetReader);
 end;
 
 end.

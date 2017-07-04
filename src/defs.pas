@@ -10,12 +10,10 @@ unit defs;
 
 interface
 
-uses PacketData;
-
 type
   TPlayerUID = record
     var id: UInt32;
-    var login: AnsiString;
+    var login: RawByteString;
     procedure SetId(id: integer);
   end;
 
@@ -203,6 +201,12 @@ type
     CREATE_GAME_PANG_BATTLE_INSSUFICENT_PANGS = $0F,
     CREATE_GAME_APPROACH_INSSUFICENT_PANGS = $11,
     CREATE_GAME_CANT_CREATE = $12
+  );
+
+  TPRICE_TYPE = (
+    PRICE_TYPE_UNKNOW = $00,
+    PRICE_TYPE_PANG   = $01,
+    PRICE_TYPE_COOKIE = $02
   );
 
 function WriteGameCreateResult(gameCreateResult: TCREATE_GAME_RESULT): Uint8;

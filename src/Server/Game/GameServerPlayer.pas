@@ -11,7 +11,8 @@ unit GameServerPlayer;
 interface
 
 uses PlayerData, PlayerCharacters, Client, PlayerAction, PlayerItems,
-  PlayerCaddies, PlayerQuest, PlayerMascots;
+  PlayerCaddies, PlayerQuest, PlayerMascots, IffManager.IffEntryBase,
+  PacketWriter;
 
 type
 
@@ -39,13 +40,21 @@ type
       var m_quest: TPlayerQuest;
 
       function FGetPlayerData: PPlayerData;
+      function FReadIsAdmin: Boolean;
+      procedure FWriteIsAdmin(isAdmin: Boolean);
     public
       var Cookies: Int64;
       var Action: TPlayerAction;
 
-      function GameInformation: AnsiString; overload;
-      function GameInformation(level: UInt8): AnsiString; overload;
-      function LobbyInformations: AnsiString;
+      function GameInformation: RawByteString; overload;
+      function GameInformation(level: UInt8): RawByteString; overload;
+      function LobbyInformations: RawByteString;
+
+      function SubStractIffEntryPrice(iffEntry: TIffEntrybase; quandtity: UInt32): Boolean;
+      function AddPangs(amount: UInt32): Boolean;
+      function RemovePangs(amount: Uint32): Boolean;
+      function AddCookies(amount: UInt32): Boolean;
+      function RemoveCookies(amount: UInt32): Boolean;
 
       property Lobby: Uint8 read m_lobby write m_lobby;
       property Data: PPlayerData read FGetPlayerData;
@@ -56,6 +65,8 @@ type
       property Mascots: TPlayerMascots read m_mascots;
       property Quests: TPlayerQuest read m_quest;
 
+      property IsAdmin: Boolean read FReadIsAdmin write FWriteIsAdmin;
+
       var InGameList: Boolean;
       var GameInfo: TGameInfo;
 
@@ -65,7 +76,6 @@ type
       procedure EquipClubById(Id: UInt32);
       procedure EquipAztecByIffId(IffId: UInt32);
 
-
       constructor Create;
       destructor Destroy; override;
   end;
@@ -74,7 +84,7 @@ type
 
 implementation
 
-uses ClientPacket, PlayerCharacter, utils, PlayerEquipment;
+uses PlayerCharacter, utils, PlayerEquipment, defs;
 
 constructor TGameServerPlayer.Create;
 begin
@@ -90,12 +100,12 @@ end;
 
 destructor TGameServerPlayer.Destroy;
 begin
-  inherited;
   m_characters.Free;
   m_items.Free;
   m_caddies.Free;
   m_mascots.Free;
   m_quest.Free;
+  inherited;
 end;
 
 function TGameServerPlayer.FGetPlayerData;
@@ -103,17 +113,17 @@ begin
   Exit(@m_data);
 end;
 
-function TGameServerPlayer.GameInformation: AnsiString;
+function TGameServerPlayer.GameInformation: RawByteString;
 begin
-  Exit(GameInformation(1));
+  Exit(GameInformation(2));
 end;
 
-function TGameServerPlayer.GameInformation(level: UInt8): AnsiString;
+function TGameServerPlayer.GameInformation(level: UInt8): RawByteString;
 var
-  packet: TClientPacket;
+  packet: TPacketWriter;
 begin
 
-  packet := TClientPacket.Create;
+  packet := TPacketWriter.Create;
 
   packet.WriteUInt32(Data.playerInfo1.ConnectionId);
 
@@ -164,7 +174,7 @@ begin
     );
 
     packet.WriteStr(
-      Action.toAnsiString
+      Action.toRawByteString
     );
 
     packet.WriteStr(
@@ -181,10 +191,16 @@ begin
       #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
       #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
       #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00 +
-      #$00#$00#$00#$00#$00#$00#$00#$00#$00#$00#$00
+      #$00#$00#$00 +
+      #$00#$00#$00#$00#$00#$00#$00#$00
     );
 
-    packet.Write(Data.equipedCharacter.Data.IffId, SizeOf(TPlayerCharacterData));
+
+
+    if level >= 2 then
+    begin
+      packet.Write(Data.equipedCharacter.Data.IffId, SizeOf(TPlayerCharacterData));
+    end;
 
   end;
 
@@ -193,9 +209,9 @@ begin
   packet.free;
 end;
 
-function TGameServerPlayer.LobbyInformations: AnsiString;
+function TGameServerPlayer.LobbyInformations: RawByteString;
 var
-  packet: TClientPacket;
+  packet: TPacketWriter;
   tmpGameId: UInt16;
 begin
 
@@ -206,7 +222,7 @@ begin
     tmpGameId := $ffff;
   end;
 
-  packet := TClientPacket.Create;
+  packet := TPacketWriter.Create;
 
   packet.WriteUInt32(Data.playerInfo1.PlayerID);
   packet.WriteUInt32(Data.playerInfo1.ConnectionId);
@@ -241,7 +257,7 @@ procedure TGameServerPlayer.EquipCharacterById(Id: Cardinal);
 begin
   with self.m_characters.getById(Id) do
   begin
-    Data.witems.CharacterId := GetIffId;
+    Data.witems.CharacterId := GetId;
     Data.equipedCharacter := GetData;
   end;
 end;
@@ -282,6 +298,65 @@ begin
   begin
     Data.witems.AztecIffID := IffId;
   end;
+end;
+
+function TGameServerPlayer.SubStractIffEntryPrice(iffEntry: TIffEntrybase; quandtity: UInt32): Boolean;
+var
+  price: UInt32;
+  priceType: TPRICE_TYPE;
+begin
+  price := iffEntry.getPrice * quandtity;
+  case iffEntry.GetPriceType of
+    PRICE_TYPE_PANG:
+    begin
+      Result := RemovePangs(price);
+    end;
+    PRICE_TYPE_COOKIE:
+    begin
+      Result := RemoveCookies(price);
+    end;
+  end;
+end;
+
+function TGameServerPlayer.AddPangs(amount: Cardinal): Boolean;
+begin
+  inc(data.playerInfo2.pangs, amount);
+  Exit(true);
+end;
+
+function TGameServerPlayer.RemovePangs(amount: Cardinal): Boolean;
+begin
+  if data.playerInfo2.pangs - amount >= 0 then
+  begin
+    dec(data.playerInfo2.pangs, amount);
+    Exit(true);
+  end;
+  Exit(False);
+end;
+
+function TGameServerPlayer.AddCookies(amount: Cardinal): Boolean;
+begin
+  inc(Cookies, amount);
+end;
+
+function TGameServerPlayer.RemoveCookies(amount: Cardinal): Boolean;
+begin
+  if Cookies - amount >= 0 then
+  begin
+    dec(Cookies, amount);
+    Exit(true);
+  end;
+  Exit(false);
+end;
+
+procedure TGameServerPlayer.FWriteIsAdmin(isAdmin: Boolean);
+begin
+  m_data.playerInfo1.gmflag := TGeneric.Iff(isAdmin, $f, $0);
+end;
+
+function TGameServerPlayer.FReadIsAdmin: Boolean;
+begin
+
 end;
 
 end.

@@ -12,3 +12,7 @@ __history
 *.tvsconfig
 *.db
 debug
+howto
+*.local
+*.stat
+*.o
